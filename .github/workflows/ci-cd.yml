@@ -1,0 +1,242 @@
+name: Enhanced MLOps CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run daily at 2 AM UTC for model retraining
+    - cron: "0 2 * * *"
+
+# Global caching for faster runs
+concurrency: ci-${{ github.ref }}
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  PYTHON_VERSION: "3.10"
+  DOCKER_REGISTRY: docker.io
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+  IMAGE_NAME: mlops-housing-pipeline
+
+jobs:
+  code-quality:
+    name: Code Quality & Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: "**/requirements.txt"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install flake8 only (faster)
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+
+      - name: Lint with flake8
+        run: |
+          flake8 src api --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 src api --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Type checking with mypy (optional)
+        continue-on-error: true
+        run: |
+          pip install mypy
+          mypy src/ --ignore-missing-imports || true
+
+  validation-testing:
+    name: Validation & API Testing
+    runs-on: ubuntu-latest
+    needs: code-quality
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: "**/requirements.txt"
+
+      - name: Install dependencies
+        uses: py-actions/py-dependency-install@v4
+        with:
+          path: requirements.txt
+
+      - name: Create necessary directories
+        run: |
+          mkdir -p models data housinglogs mlruns
+
+      - name: Prepare data (generate housing.csv)
+        run: |
+          python src/load_data.py
+
+      - name: Train models for testing
+        run: |
+          python src/train_and_track.py
+
+      - name: Run validation tests
+        run: |
+          python test_validation.py
+
+  docker-build-push:
+    name: Docker Build & Push
+    needs: [validation-testing]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/mlops-housing-pipeline
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Verify Dockerfile presence and set path
+        run: |
+          echo "Workspace: $(pwd)"
+          ls -la
+          if [ -f Dockerfile ]; then
+            echo "Found Dockerfile"
+            echo "DOCKERFILE_PATH=Dockerfile" >> $GITHUB_ENV
+            head -n 5 Dockerfile
+          elif [ -f DockerFile ]; then
+            echo "Found DockerFile (non-standard casing)"
+            echo "DOCKERFILE_PATH=DockerFile" >> $GITHUB_ENV
+            head -n 5 DockerFile
+          else
+            echo "ERROR: Dockerfile not found in workspace" >&2
+            exit 1
+          fi
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE_PATH }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: docker-build-push
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKER_USERNAME }}/mlops-housing-pipeline:latest
+          format: "sarif"
+          output: "trivy-results.sarif"
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+
+  deploy:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    needs: [docker-build-push, security-scan]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create deployment script
+        run: |
+          cat > deploy.sh << 'EOF'
+          #!/bin/bash
+          set -e
+
+          echo "🚀 Starting MLOps Pipeline Deployment"
+
+          # Stop existing containers
+          echo "🛑 Stopping existing containers..."
+          docker-compose -f docker-compose.monitoring.yml down || true
+
+          # Pull latest images
+          echo "📥 Pulling latest Docker images..."
+          docker pull ${{ secrets.DOCKER_USERNAME }}/mlops-housing-pipeline:latest
+
+          # Update docker-compose to use the new image
+          sed -i 's|build: .|image: ${{ secrets.DOCKER_USERNAME }}/mlops-housing-pipeline:latest|g' docker-compose.monitoring.yml
+
+          # Start services
+          echo "🚀 Starting services..."
+          docker-compose -f docker-compose.monitoring.yml up -d
+
+          # Wait for services to be ready
+          echo "⏳ Waiting for services to be ready..."
+          sleep 30
+
+          # Health checks
+          echo "🏥 Running health checks..."
+          curl -f http://localhost:8000/health || exit 1
+
+          echo "✅ Deployment completed successfully!"
+          echo "🌐 Services available at:"
+          echo "  - Housing API: http://localhost:8000/docs"
+          echo "  - Grafana: http://localhost:3000"
+          echo "  - MLflow: http://localhost:5000"
+          EOF
+
+          chmod +x deploy.sh
+
+      - name: Deploy locally (simulation)
+        run: |
+          echo "🎯 Deployment script created successfully!"
+          echo "📋 Deployment would execute the following:"
+          cat deploy.sh
+          echo ""
+          echo "✅ Ready for deployment!"
+          echo "To deploy manually, run: ./deploy.sh"
+
+      - name: Upload deployment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-scripts
+          path: |
+            deploy.sh
+            docker-compose.monitoring.yml

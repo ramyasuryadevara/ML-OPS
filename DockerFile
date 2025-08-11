@@ -1,0 +1,37 @@
+# Use the official Python base image
+FROM python:3.10-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy all files into the container
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p housinglogs models data mlruns logs
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Create non-root user for security
+RUN useradd -m -u 1000 mlops && chown -R mlops:mlops /app
+USER mlops
+
+# Expose ports for different services
+EXPOSE 8000 8001 8002 5000
+
+# Default command (can be overridden in docker-compose)
+CMD ["uvicorn", "api.housing_api:app", "--host", "0.0.0.0", "--port", "8000"]

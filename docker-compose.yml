@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mlops-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - mlops-network
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mlops-grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    networks:
+      - mlops-network
+    depends_on:
+      - prometheus
+
+  # Housing Price Prediction API
+  housing-api:
+    build: .
+    container_name: mlops-housing-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./housinglogs:/app/housinglogs
+      - shared_data:/app/shared
+    environment:
+      - PYTHONPATH=/app
+      - SHARED_DIR=/app/shared
+    command: uvicorn api.housing_api:app --host 0.0.0.0 --port 8000
+    networks:
+      - mlops-network
+    depends_on:
+      - prometheus
+
+  # Model Retraining Service
+  retraining-service:
+    build: .
+    container_name: mlops-retraining
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./housinglogs:/app/housinglogs
+      - ./mlruns:/app/mlruns
+      - shared_data:/app/shared
+    environment:
+      - PYTHONPATH=/app
+      - SHARED_DIR=/app/shared
+    command: python src/retraining_scheduler.py
+    networks:
+      - mlops-network
+    depends_on:
+      - housing-api
+
+  # MLflow Tracking Server
+  mlflow:
+    image: python:3.10-slim
+    container_name: mlops-mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlruns:/app/mlruns
+    working_dir: /app
+    command: >
+      bash -c "pip install mlflow &&
+               mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri file:///app/mlruns"
+    networks:
+      - mlops-network
+
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  shared_data:
+
+networks:
+  mlops-network:
+    driver: bridge

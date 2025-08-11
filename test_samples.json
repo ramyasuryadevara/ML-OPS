@@ -1,0 +1,157 @@
+{
+  "housing_api": {
+    "valid_samples": [
+      {
+        "name": "Typical California House",
+        "description": "Average house in California with reasonable values",
+        "data": {
+          "total_rooms": 5000.0,
+          "total_bedrooms": 1200.0,
+          "population": 3000.0,
+          "households": 1000.0,
+          "median_income": 5.5,
+          "housing_median_age": 25.0,
+          "latitude": 37.88,
+          "longitude": -122.23
+        },
+        "expected_price_range": "$400k-$600k"
+      },
+      {
+        "name": "Luxury Bay Area Property",
+        "description": "High-end property in expensive Bay Area location",
+        "data": {
+          "total_rooms": 8000.0,
+          "total_bedrooms": 2000.0,
+          "population": 2500.0,
+          "households": 800.0,
+          "median_income": 12.0,
+          "housing_median_age": 15.0,
+          "latitude": 37.77,
+          "longitude": -122.42
+        },
+        "expected_price_range": "$800k-$1.2M"
+      },
+      {
+        "name": "Rural California Property",
+        "description": "Property in rural area with lower income",
+        "data": {
+          "total_rooms": 2000.0,
+          "total_bedrooms": 500.0,
+          "population": 1500.0,
+          "households": 600.0,
+          "median_income": 3.2,
+          "housing_median_age": 35.0,
+          "latitude": 36.5,
+          "longitude": -119.8
+        },
+        "expected_price_range": "$200k-$350k"
+      },
+      {
+        "name": "Los Angeles Suburb",
+        "description": "Suburban property in LA area",
+        "data": {
+          "total_rooms": 6500.0,
+          "total_bedrooms": 1500.0,
+          "population": 4000.0,
+          "households": 1300.0,
+          "median_income": 7.8,
+          "housing_median_age": 20.0,
+          "latitude": 34.05,
+          "longitude": -118.24
+        },
+        "expected_price_range": "$500k-$750k"
+      },
+      {
+        "name": "San Diego Coastal",
+        "description": "Coastal property in San Diego",
+        "data": {
+          "total_rooms": 4500.0,
+          "total_bedrooms": 1100.0,
+          "population": 2800.0,
+          "households": 900.0,
+          "median_income": 8.5,
+          "housing_median_age": 18.0,
+          "latitude": 32.72,
+          "longitude": -117.16
+        },
+        "expected_price_range": "$600k-$850k"
+      }
+    ],
+    "invalid_samples": [
+      {
+        "name": "Negative Median Income",
+        "description": "Should fail validation due to negative income",
+        "data": {
+          "total_rooms": 5000.0,
+          "total_bedrooms": 1200.0,
+          "population": 3000.0,
+          "households": 1000.0,
+          "median_income": -1.0,
+          "housing_median_age": 25.0,
+          "latitude": 37.88,
+          "longitude": -122.23
+        },
+        "expected_error": "median_income must be greater than 0"
+      },
+      {
+        "name": "Bedrooms Exceed Rooms",
+        "description": "Should fail validation due to bedrooms > rooms",
+        "data": {
+          "total_rooms": 1000.0,
+          "total_bedrooms": 1500.0,
+          "population": 3000.0,
+          "households": 1000.0,
+          "median_income": 5.5,
+          "housing_median_age": 25.0,
+          "latitude": 37.88,
+          "longitude": -122.23
+        },
+        "expected_error": "Total bedrooms cannot exceed total rooms"
+      },
+      {
+        "name": "Households Exceed Population",
+        "description": "Should fail validation due to households > population",
+        "data": {
+          "total_rooms": 5000.0,
+          "total_bedrooms": 1200.0,
+          "population": 1000.0,
+          "households": 2000.0,
+          "median_income": 5.5,
+          "housing_median_age": 25.0,
+          "latitude": 37.88,
+          "longitude": -122.23
+        },
+        "expected_error": "Number of households cannot exceed population"
+      },
+      {
+        "name": "Invalid Latitude",
+        "description": "Should fail validation due to latitude outside California",
+        "data": {
+          "total_rooms": 5000.0,
+          "total_bedrooms": 1200.0,
+          "population": 3000.0,
+          "households": 1000.0,
+          "median_income": 5.5,
+          "housing_median_age": 25.0,
+          "latitude": 45.0,
+          "longitude": -122.23
+        },
+        "expected_error": "Latitude must be within California bounds"
+      },
+      {
+        "name": "Invalid Longitude",
+        "description": "Should fail validation due to longitude outside California",
+        "data": {
+          "total_rooms": 5000.0,
+          "total_bedrooms": 1200.0,
+          "population": 3000.0,
+          "households": 1000.0,
+          "median_income": 5.5,
+          "housing_median_age": 25.0,
+          "latitude": 37.88,
+          "longitude": -100.0
+        },
+        "expected_error": "Longitude must be within California bounds"
+      }
+    ]
+  }
