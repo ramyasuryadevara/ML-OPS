@@ -9,7 +9,6 @@ housinglogs/
 irislogs/
 mlruns/
 shared/
-data/
 
 # Environments
 .env
