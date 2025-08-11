@@ -1,6 +1,20 @@
 version: '3.8'
 
 services:
+  # Model Training Service (runs once to create the model)
+  model-trainer:
+    build: .
+    container_name: mlops-model-trainer
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./mlruns:/app/mlruns
+    environment:
+      - PYTHONPATH=/app
+    command: python train_and_track.py
+    networks:
+      - mlops-network
+
   # Prometheus for metrics collection
   prometheus:
     image: prom/prometheus:latest
@@ -50,14 +64,29 @@ services:
       - ./data:/app/data
       - ./housinglogs:/app/housinglogs
       - shared_data:/app/shared
+      - ./mlruns:/app/mlruns
     environment:
       - PYTHONPATH=/app
       - SHARED_DIR=/app/shared
-    command: uvicorn api.housing_api:app --host 0.0.0.0 --port 8000
+    # Updated command to ensure model exists before starting API
+    command: >
+      bash -c "
+        echo 'Checking for trained model...' &&
+        if [ ! -f models/DecisionTree.pkl ]; then
+          echo 'Model not found, training model first...' &&
+          python train_and_track.py &&
+          echo 'Model training completed';
+        else
+          echo 'Model found, skipping training';
+        fi &&
+        echo 'Starting API server...' &&
+        uvicorn api.housing_api:app --host 0.0.0.0 --port 8000
+      "
     networks:
       - mlops-network
     depends_on:
       - prometheus
+    restart: unless-stopped
 
   # Model Retraining Service
   retraining-service:
@@ -94,7 +123,6 @@ services:
                mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri file:///app/mlruns"
     networks:
       - mlops-network
-
 
 volumes:
   prometheus_data:
